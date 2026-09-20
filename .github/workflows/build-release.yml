@@ -26,6 +26,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Setup Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
       - name: Check Android SDK
         shell: bash
         run: |
@@ -59,7 +64,7 @@ jobs:
           echo "Menggunakan: $SDKMANAGER"
 
           yes | "$SDKMANAGER" --licenses \
-            || echo "Lisensi SDK mungkin sudah diterima."
+            || echo "Lisensi mungkin sudah diterima."
 
           "$SDKMANAGER" \
             "platform-tools" \
@@ -71,28 +76,20 @@ jobs:
         run: |
           set -e
 
-          if [ -f "./gradlew" ]; then
-            echo "Gradle Wrapper ditemukan."
-          else
-            echo "Gradle Wrapper tidak ditemukan."
-            echo "Mencoba membuat wrapper..."
-
-            if ! command -v gradle >/dev/null 2>&1; then
-              echo "ERROR: Gradle tidak tersedia di runner."
-              exit 1
-            fi
-
+          if [ ! -f "./gradlew" ]; then
+            echo "Membuat Gradle Wrapper menggunakan Gradle 8.13..."
             gradle wrapper --gradle-version 8.13
+          fi
 
-            if [ ! -f "./gradlew" ]; then
-              echo "ERROR: Gradle Wrapper gagal dibuat."
-              exit 1
-            fi
+          if [ ! -f "./gradlew" ]; then
+            echo "ERROR: Gradle Wrapper gagal dibuat."
+            exit 1
           fi
 
           chmod +x ./gradlew
 
           echo "Gradle Wrapper siap."
+          ./gradlew --version
 
       - name: Build Release APK
         shell: bash
@@ -116,7 +113,7 @@ jobs:
             exit 1
           fi
 
-          echo "APK berhasil ditemukan:"
+          echo "APK ditemukan:"
           ls -lh release-apk/
 
       - name: Upload APK Artifact
