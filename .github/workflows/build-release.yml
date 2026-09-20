@@ -25,19 +25,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
-
-      # Gunakan Android SDK yang sudah tersedia
-      # pada GitHub-hosted runner.
-      # Tidak menggunakan android-actions/setup-android@v3
-      # agar tidak memanggil sdkmanager "tools".
 
       - name: Check Android SDK
         shell: bash
         run: |
           set -e
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 
@@ -46,8 +38,7 @@ jobs:
             exit 1
           fi
 
-          echo "SDK ditemukan di: $SDK"
-          echo "$SDK/platform-tools"
+          echo "Android SDK: $SDK"
 
       - name: Install Android SDK packages
         shell: bash
@@ -55,74 +46,77 @@ jobs:
           set -e
 
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT}}"
+
           SDKMANAGER="$(find "$SDK/cmdline-tools" \
             -type f -name sdkmanager 2>/dev/null \
             | sort -V | tail -n 1)"
 
           if [ -z "$SDKMANAGER" ]; then
             echo "ERROR: sdkmanager tidak ditemukan."
-            echo "Isi folder cmdline-tools:"
-            ls -la "$SDK/cmdline-tools" || true
             exit 1
           fi
 
           echo "Menggunakan: $SDKMANAGER"
 
           yes | "$SDKMANAGER" --licenses \
-            || echo "Lisensi mungkin sudah diterima."
+            || echo "Lisensi SDK mungkin sudah diterima."
 
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0"
 
-      - name: Locate Gradle Wrapper
+      - name: Locate or Generate Gradle Wrapper
         shell: bash
         run: |
           set -e
 
-          echo "Isi repository:"
-          ls -la
-
           if [ -f "./gradlew" ]; then
-            echo "ROOT_DIR=." >> "$GITHUB_ENV"
-          elif [ -f "./nusafit_v12_work/gradlew" ]; then
-            echo "ROOT_DIR=nusafit_v12_work" >> "$GITHUB_ENV"
+            echo "Gradle Wrapper ditemukan."
           else
-            echo "ERROR: gradlew tidak ditemukan."
-            echo "Pastikan project Android lengkap di repository."
-            find . -maxdepth 4 -name gradlew -type f
-            exit 1
+            echo "Gradle Wrapper tidak ditemukan."
+            echo "Mencoba membuat wrapper..."
+
+            if ! command -v gradle >/dev/null 2>&1; then
+              echo "ERROR: Gradle tidak tersedia di runner."
+              exit 1
+            fi
+
+            gradle wrapper --gradle-version 8.13
+
+            if [ ! -f "./gradlew" ]; then
+              echo "ERROR: Gradle Wrapper gagal dibuat."
+              exit 1
+            fi
           fi
 
-      - name: Make Gradle Wrapper executable
-        shell: bash
-        run: |
-          chmod +x "$ROOT_DIR/gradlew"
+          chmod +x ./gradlew
+
+          echo "Gradle Wrapper siap."
 
       - name: Build Release APK
         shell: bash
         run: |
           set -e
-          cd "$ROOT_DIR"
           ./gradlew --no-daemon clean assembleRelease
 
-      - name: Find APK
+      - name: Collect APK
         shell: bash
         run: |
           set -e
-          mkdir -p "$GITHUB_WORKSPACE/release-apk"
 
-          find "$ROOT_DIR/app/build/outputs/apk" \
+          mkdir -p release-apk
+
+          find app/build/outputs/apk \
             -type f -name "*.apk" \
-            -exec cp {} "$GITHUB_WORKSPACE/release-apk/" \;
+            -exec cp {} release-apk/ \;
 
           if [ -z "$(ls -A release-apk)" ]; then
             echo "ERROR: APK tidak ditemukan."
             exit 1
           fi
 
-          echo "APK berhasil dibuat:"
+          echo "APK berhasil ditemukan:"
           ls -lh release-apk/
 
       - name: Upload APK Artifact
