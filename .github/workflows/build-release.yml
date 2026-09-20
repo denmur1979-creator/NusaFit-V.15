@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - main
+      - master
 
 permissions:
   contents: read
@@ -19,36 +20,115 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
+          cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # Gunakan Android SDK yang sudah tersedia
+      # pada GitHub-hosted runner.
+      # Tidak menggunakan android-actions/setup-android@v3
+      # agar tidak memanggil sdkmanager "tools".
 
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses || true
-
-      - name: Install required Android SDK packages
+      - name: Check Android SDK
+        shell: bash
         run: |
-          sdkmanager \
+          set -e
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+            echo "ERROR: Android SDK tidak ditemukan."
+            exit 1
+          fi
+
+          echo "SDK ditemukan di: $SDK"
+          echo "$SDK/platform-tools"
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -e
+
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT}}"
+          SDKMANAGER="$(find "$SDK/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null \
+            | sort -V | tail -n 1)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager tidak ditemukan."
+            echo "Isi folder cmdline-tools:"
+            ls -la "$SDK/cmdline-tools" || true
+            exit 1
+          fi
+
+          echo "Menggunakan: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses \
+            || echo "Lisensi mungkin sudah diterima."
+
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Locate Gradle Wrapper
+        shell: bash
+        run: |
+          set -e
+
+          echo "Isi repository:"
+          ls -la
+
+          if [ -f "./gradlew" ]; then
+            echo "ROOT_DIR=." >> "$GITHUB_ENV"
+          elif [ -f "./nusafit_v12_work/gradlew" ]; then
+            echo "ROOT_DIR=nusafit_v12_work" >> "$GITHUB_ENV"
+          else
+            echo "ERROR: gradlew tidak ditemukan."
+            echo "Pastikan project Android lengkap di repository."
+            find . -maxdepth 4 -name gradlew -type f
+            exit 1
+          fi
+
+      - name: Make Gradle Wrapper executable
+        shell: bash
+        run: |
+          chmod +x "$ROOT_DIR/gradlew"
 
       - name: Build Release APK
+        shell: bash
         run: |
-          chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon
+          set -e
+          cd "$ROOT_DIR"
+          ./gradlew --no-daemon clean assembleRelease
 
-      - name: Upload APK
+      - name: Find APK
+        shell: bash
+        run: |
+          set -e
+          mkdir -p "$GITHUB_WORKSPACE/release-apk"
+
+          find "$ROOT_DIR/app/build/outputs/apk" \
+            -type f -name "*.apk" \
+            -exec cp {} "$GITHUB_WORKSPACE/release-apk/" \;
+
+          if [ -z "$(ls -A release-apk)" ]; then
+            echo "ERROR: APK tidak ditemukan."
+            exit 1
+          fi
+
+          echo "APK berhasil dibuat:"
+          ls -lh release-apk/
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NusaFit-APK
-          path: app/build/outputs/apk/release/*.apk
+          name: NusaFit-Android-APK
+          path: release-apk/*.apk
           if-no-files-found: error
+          retention-days: 14
